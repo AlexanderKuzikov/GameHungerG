@@ -256,6 +256,11 @@ assert.equal(state.mode, "playing", "После выбора улучшения 
 
 game.pause();
 assert.equal(state.mode, "paused");
+state.score = 500;
+game.restart();
+state = game.getState();
+assert.equal(state.mode, "playing");
+assert.ok(JSON.parse(storage.get("starfall-orchard-v1")).best >= 500, "Рестарт из паузы должен сохранять рекорд");
 game.resume();
 assert.equal(state.mode, "playing");
 

@@ -2199,6 +2199,8 @@
       }
 
       function startGame() {
+        preferences.best = Math.max(preferences.best, state.best, state.score);
+        savePreferences(preferences.best, preferences.muted);
         sound.ensure();
         state = createState(Date.now() ^ Math.floor(Math.random() * 0xffffffff));
         state.mode = "playing";
@@ -2505,6 +2507,10 @@
       });
       document.addEventListener("visibilitychange", () => {
         if (document.hidden && state.mode === "playing") pauseGame();
+      });
+      window.addEventListener("pagehide", () => {
+        preferences.best = Math.max(preferences.best, state.best, state.score);
+        savePreferences(preferences.best, preferences.muted);
       });
       window.addEventListener("resize", resizeCanvas);
 
