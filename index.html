@@ -780,7 +780,7 @@
       const canvas = $("game");
       const context = canvas.getContext("2d", { alpha: false });
       const viewport = { width: 1, height: 1, dpr: 1, scale: 1, offsetX: 0, offsetY: 0 };
-      const input = { x: 0, y: 0, pointer: { active: false, x: CENTER_X, y: CENTER_Y } };
+      const input = { x: 0, y: 0, pointer: { active: false, x: CENTER_X, y: CENTER_Y, clientX: 0, clientY: 0 } };
       const keys = new Set();
       let toastTimer = 0;
       let menuTime = 0;
@@ -1041,7 +1041,8 @@
             drag: 3.2
           });
         }
-        for (const enemy of state.enemies) {
+        for (let i = state.enemies.length - 1; i >= 0; i -= 1) {
+          const enemy = state.enemies[i];
           const dx = enemy.x - player.x;
           const dy = enemy.y - player.y;
           const distance = Math.hypot(dx, dy);
@@ -1413,7 +1414,11 @@
 
       function stepGame(state, dt, controls = input) {
         if (state.mode !== "playing") return [];
-        const previousInput = input;
+        const previousInput = controls === input ? null : {
+          x: input.x,
+          y: input.y,
+          pointer: { ...input.pointer }
+        };
         // controls позволяет проверять симуляцию без DOM; в игре это тот же объект.
         if (controls !== input) {
           input.x = controls.x || 0;
@@ -1455,7 +1460,7 @@
 
         const events = state.events;
         state.events = [];
-        if (controls !== input) {
+        if (previousInput) {
           input.x = previousInput.x;
           input.y = previousInput.y;
           input.pointer.active = previousInput.pointer.active;
@@ -1600,12 +1605,17 @@
         const rect = canvas.getBoundingClientRect();
         viewport.width = Math.max(1, rect.width);
         viewport.height = Math.max(1, rect.height);
-        viewport.dpr = Math.min(1.5, window.devicePixelRatio || 1, Math.sqrt(2500000 / (viewport.width * viewport.height)));
+        viewport.dpr = Math.min(1.25, window.devicePixelRatio || 1, Math.sqrt(1600000 / (viewport.width * viewport.height)));
         viewport.scale = Math.min(viewport.width / WIDTH, viewport.height / HEIGHT);
         viewport.offsetX = (viewport.width - WIDTH * viewport.scale) / 2;
         viewport.offsetY = (viewport.height - HEIGHT * viewport.scale) / 2;
         canvas.width = Math.round(viewport.width * viewport.dpr);
         canvas.height = Math.round(viewport.height * viewport.dpr);
+        if (input.pointer.active && Number.isFinite(input.pointer.clientX) && Number.isFinite(input.pointer.clientY)) {
+          const point = toWorld(input.pointer.clientX, input.pointer.clientY);
+          input.pointer.x = point.x;
+          input.pointer.y = point.y;
+        }
       }
 
       function toWorld(clientX, clientY) {
@@ -2216,6 +2226,8 @@
       function pauseGame() {
         if (state.mode !== "playing") return;
         state.mode = "paused";
+        state.actions.pulse = false;
+        state.actions.dash = false;
         keys.clear();
         input.pointer.active = false;
         currentScreen = "";
@@ -2409,11 +2421,10 @@
 
       window.addEventListener("keydown", (event) => {
         const code = normalizeKeyCode(event);
+        if (event.target && event.target.closest && event.target.closest("button") && (code === "Enter" || code === "Space")) return;
         const controlled = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "ShiftLeft", "ShiftRight"];
         if (controlled.includes(code)) event.preventDefault();
         keys.add(code);
-
-        if (event.target && event.target.closest && event.target.closest("button") && (code === "Enter" || code === "Space")) return;
 
         if (["KeyW", "KeyA", "KeyS", "KeyD", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(code)) {
           input.pointer.active = false;
@@ -2454,6 +2465,8 @@
         const point = toWorld(event.clientX, event.clientY);
         input.pointer.x = point.x;
         input.pointer.y = point.y;
+        input.pointer.clientX = event.clientX;
+        input.pointer.clientY = event.clientY;
         input.pointer.active = event.pointerType === "mouse" || event.buttons > 0;
       });
 
@@ -2463,6 +2476,8 @@
         const point = toWorld(event.clientX, event.clientY);
         input.pointer.x = point.x;
         input.pointer.y = point.y;
+        input.pointer.clientX = event.clientX;
+        input.pointer.clientY = event.clientY;
         input.pointer.active = true;
         if (state.mode !== "playing") return;
         if (event.button === 2) state.actions.dash = true;

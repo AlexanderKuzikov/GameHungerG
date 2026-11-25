@@ -62,6 +62,11 @@ function createElement(tagName) {
       if (!listeners.has(type)) listeners.set(type, []);
       listeners.get(type).push(handler);
     },
+    dispatchEvent(type, event = {}) {
+      if (!event.target) event.target = element;
+      for (const handler of listeners.get(type) || []) handler(event);
+      return event;
+    },
     appendChild(child) {
       element.children.push(child);
       return child;
@@ -135,9 +140,17 @@ vm.runInContext(script, sandbox, { filename: "index.html:inline" });
 const game = window.StarfallGame;
 assert.ok(game && game.version === "1.0.0", "Публичный игровой интерфейс недоступен");
 
-function dispatchKey(type, key, code = "") {
-  const event = { key, code, repeat: false, preventDefault() {} };
+function dispatchKey(type, key, code = "", target = null) {
+  const event = {
+    key,
+    code,
+    repeat: false,
+    target,
+    prevented: false,
+    preventDefault() { this.prevented = true; }
+  };
   for (const handler of windowListeners.get(type) || []) handler(event);
+  return event;
 }
 
 const first = game.createState(12345);
@@ -149,6 +162,11 @@ assert.deepEqual(
   second.motes.map(({ x, y }) => [x, y]),
   "Одинаковый seed должен давать одинаковое начальное состояние"
 );
+
+const buttonTarget = { closest: () => ({ tagName: "BUTTON" }) };
+const spaceOnButton = dispatchKey("keydown", " ", "", buttonTarget);
+assert.equal(spaceOnButton.prevented, false, "Space на кнопке должен оставаться нативным");
+assert.equal(game.getState().mode, "menu", "Space на кнопке не должен запускать игру напрямую");
 
 game.start();
 let state = game.getState();
@@ -162,10 +180,33 @@ assert.equal(state.mode, "paused", "Escape без event.code должен ста
 dispatchKey("keydown", "Enter");
 assert.equal(state.mode, "playing", "Enter должен продолжать игру");
 
+const canvasElement = elements.get("game");
+let canvasRect = { left: 0, top: 0, width: 1280, height: 720 };
+canvasElement.getBoundingClientRect = () => canvasRect;
+canvasElement.dispatchEvent("pointermove", { clientX: 700, clientY: 360, pointerType: "mouse" });
+for (let i = 0; i < 30; i += 1) game.step(1 / 60);
+const xBeforeResize = state.player.x;
+canvasRect = { left: 0, top: 0, width: 640, height: 360 };
+for (const handler of windowListeners.get("resize") || []) handler();
+for (let i = 0; i < 30; i += 1) game.step(1 / 60);
+assert.ok(state.player.x > xBeforeResize + 20, "После resize мишень указателя должна пересчитываться");
+game.setInput({ pointer: { active: false } });
+
 const startX = state.player.x;
 game.setInput({ x: 1, y: 0, pointer: { active: false } });
 for (let i = 0; i < 30; i += 1) game.step(1 / 60);
 assert.ok(state.player.x > startX + 20, "Клавиатурное движение должно перемещать садовника");
+
+game.setInput({ x: 0, y: 0, pointer: { active: false } });
+state.enemies.length = 0;
+state.player.vx = 0;
+state.player.vy = 0;
+game.step(1 / 60, { x: 1, y: 0, pointer: { active: false } });
+state.player.vx = 0;
+state.player.vy = 0;
+const xAfterTestStep = state.player.x;
+game.step(1 / 60);
+assert.ok(Math.abs(state.player.x - xAfterTestStep) < 0.5, "Тестовые controls не должны оставаться в глобальном input");
 
 game.setInput({ x: 0, y: 0, pointer: { active: false } });
 state.enemies.length = 0;
@@ -197,7 +238,7 @@ assert.ok(state.feeds >= 3, "Кормление должно продвигат�
 
 state.pulseRecharge = 0;
 state.pulseCharges = 2;
-state.enemies = [{
+const pulseEnemy = {
   id: 1,
   kind: "wisp",
   x: state.player.x + 55,
@@ -214,11 +255,12 @@ state.enemies = [{
   dashTimer: 99,
   dashTime: 0,
   dashAngle: 0
-}];
+};
+state.enemies = [pulseEnemy, { ...pulseEnemy, id: 2, x: state.player.x + 75 }];
 game.pulse();
 game.step(1 / 60);
 assert.equal(state.pulseCharges, 1, "Импульс должен расходовать заряд");
-assert.equal(state.enemies.length, 0, "Импульс должен уничтожать слабого врага рядом");
+assert.equal(state.enemies.length, 0, "Импульс должен уничтожать всех слабых врагов в радиусе");
 
 game.pulse();
 game.step(1 / 60);
@@ -254,15 +296,25 @@ const chosenId = state.upgradeChoices[0].id;
 assert.equal(game.chooseUpgrade(chosenId), true);
 assert.equal(state.mode, "playing", "После выбора улучшения игра должна продолжиться");
 
+state.actions.pulse = true;
+state.actions.dash = true;
+const chargesBeforePause = state.pulseCharges;
 game.pause();
 assert.equal(state.mode, "paused");
+assert.equal(state.actions.pulse, false, "Пауза должна сбрасывать отложенный импульс");
+assert.equal(state.actions.dash, false, "Пауза должна сбрасывать отложенный рывок");
+game.resume();
+assert.equal(state.mode, "playing", "Переход paused→playing должен проверяться отдельно");
+game.step(1 / 60);
+assert.equal(state.pulseCharges, chargesBeforePause, "После resume импульс не должен тратиться без нового ввода");
+assert.equal(state.player.dashTime, 0, "После resume рывок не должен срабатывать без нового ввода");
+
+game.pause();
 state.score = 500;
 game.restart();
 state = game.getState();
 assert.equal(state.mode, "playing");
 assert.ok(JSON.parse(storage.get("starfall-orchard-v1")).best >= 500, "Рестарт из паузы должен сохранять рекорд");
-game.resume();
-assert.equal(state.mode, "playing");
 
 state.lives = 1;
 state.player.invulnerable = 0;
